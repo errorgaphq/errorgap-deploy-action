@@ -1,0 +1,90 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  records:
+    name: Records the release with the upload key
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          nohup node .github/mock-errorgap.js "$PWD/requests.log" > mock.log 2>&1 &
+          sleep 1
+      - id: deploy
+        uses: ./
+        with:
+          environment: staging
+          sha: abc123
+          version: 1.2.3
+          branch: release
+          upload-key: test-upload-key
+          endpoint: http://127.0.0.1:8787
+          project-slug: demo
+      - run: |
+          cat requests.log
+          test "${{ steps.deploy.outputs.status }}" = "recorded"
+          test "$(wc -l < requests.log)" = "1"
+          grep -q '"method":"POST","url":"/api/projects/demo/releases"' requests.log
+          grep -q '"key":"test-upload-key"' requests.log
+          grep -q '\\"version\\":\\"1.2.3\\"' requests.log
+          grep -q '\\"sha\\":\\"abc123\\"' requests.log
+          grep -q '\\"branch\\":\\"release\\"' requests.log
+          grep -q '\\"environment\\":\\"staging\\"' requests.log
+
+  api-key-and-env:
+    name: Falls back to the API key and the environment
+    runs-on: ubuntu-latest
+    env:
+      ERRORGAP_ENDPOINT: http://127.0.0.1:8787
+      ERRORGAP_PROJECT_SLUG: from-env
+      ERRORGAP_API_KEY: env-api-key
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          nohup node .github/mock-errorgap.js "$PWD/requests.log" > mock.log 2>&1 &
+          sleep 1
+      - uses: ./
+        with:
+          environment: production
+      - run: |
+          cat requests.log
+          grep -q '"url":"/api/projects/from-env/releases"' requests.log
+          grep -q '"key":"env-api-key"' requests.log
+          grep -q '\\"sha\\":\\"${{ github.sha }}\\"' requests.log
+          grep -q '\\"branch\\":\\"${{ github.ref_name }}\\"' requests.log
+
+  skips-without-key:
+    name: Skips without a key
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          nohup node .github/mock-errorgap.js "$PWD/requests.log" > mock.log 2>&1 &
+          sleep 1
+      - id: deploy
+        uses: ./
+        with:
+          environment: production
+          endpoint: http://127.0.0.1:8787
+          project-slug: demo
+      - run: |
+          test "${{ steps.deploy.outputs.status }}" = "skipped"
+          test ! -s requests.log
+
+  fails-when-rejected:
+    name: Fails when the release isn't accepted
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: deploy
+        continue-on-error: true
+        uses: ./
+        with:
+          environment: production
+          upload-key: test-upload-key
+          endpoint: http://127.0.0.1:9
+          project-slug: demo
+      - run: test "${{ steps.deploy.outcome }}" = "failure"

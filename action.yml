@@ -1,0 +1,96 @@
+name: Record a deploy in Errorgap
+description: >-
+  Record a release in an Errorgap project, so it shows on Deploys and errors
+  are attributed to it. Runs `npx @errorgap/node deploy`. Skips without a key.
+author: Errorgap
+branding:
+  icon: upload-cloud
+  color: red
+
+inputs:
+  environment:
+    description: The environment that was deployed (production, staging, beta, ...).
+    required: true
+  sha:
+    description: The commit that was deployed. Defaults to the commit the workflow runs for.
+    required: false
+    default: ${{ github.sha }}
+  version:
+    description: A version label for the release, when it isn't the commit.
+    required: false
+    default: ""
+  branch:
+    description: The branch that was deployed. Defaults to the workflow's branch.
+    required: false
+    default: ${{ github.ref_name }}
+  upload-key:
+    description: The project's upload key (a secret). Falls back to ERRORGAP_UPLOAD_KEY in the environment.
+    required: false
+    default: ""
+  api-key:
+    description: The project's API key, used when there is no upload key. Falls back to ERRORGAP_API_KEY in the environment. Skips when no key of either kind is set.
+    required: false
+    default: ""
+  endpoint:
+    description: The Errorgap instance. Falls back to ERRORGAP_ENDPOINT in the environment.
+    required: false
+    default: ""
+  project-slug:
+    description: The project's slug. Falls back to ERRORGAP_PROJECT_SLUG in the environment.
+    required: false
+    default: ""
+  cli-version:
+    description: The @errorgap/node version that records the release.
+    required: false
+    default: "0.5.0"
+
+outputs:
+  status:
+    description: "'recorded' when Errorgap accepted the release, 'skipped' when there was no key."
+    value: ${{ steps.deploy.outputs.status }}
+
+runs:
+  using: composite
+  steps:
+    - id: deploy
+      shell: bash
+      env:
+        INPUT_ENVIRONMENT: ${{ inputs.environment }}
+        INPUT_SHA: ${{ inputs.sha }}
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_BRANCH: ${{ inputs.branch }}
+        INPUT_UPLOAD_KEY: ${{ inputs.upload-key }}
+        INPUT_API_KEY: ${{ inputs.api-key }}
+        INPUT_ENDPOINT: ${{ inputs.endpoint }}
+        INPUT_PROJECT_SLUG: ${{ inputs.project-slug }}
+        INPUT_CLI_VERSION: ${{ inputs.cli-version }}
+      run: |
+        if [[ -n "$INPUT_UPLOAD_KEY" ]]; then
+          export ERRORGAP_UPLOAD_KEY="$INPUT_UPLOAD_KEY"
+        fi
+        if [[ -n "$INPUT_API_KEY" ]]; then
+          export ERRORGAP_API_KEY="$INPUT_API_KEY"
+        fi
+        if [[ -z "${ERRORGAP_UPLOAD_KEY:-}" && -z "${ERRORGAP_API_KEY:-}" ]]; then
+          echo "No Errorgap key; not recording the deploy."
+          echo "status=skipped" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+        if [[ -n "${ERRORGAP_UPLOAD_KEY:-}" ]]; then echo "::add-mask::$ERRORGAP_UPLOAD_KEY"; fi
+        if [[ -n "${ERRORGAP_API_KEY:-}" ]]; then echo "::add-mask::$ERRORGAP_API_KEY"; fi
+        if [[ -n "$INPUT_ENDPOINT" ]]; then
+          export ERRORGAP_ENDPOINT="$INPUT_ENDPOINT"
+        fi
+        if [[ -n "$INPUT_PROJECT_SLUG" ]]; then
+          export ERRORGAP_PROJECT_SLUG="$INPUT_PROJECT_SLUG"
+        fi
+
+        args=(deploy --environment "$INPUT_ENVIRONMENT" --sha "${INPUT_SHA:-$GITHUB_SHA}")
+        if [[ -n "$INPUT_VERSION" ]]; then
+          args+=(--version "$INPUT_VERSION")
+        fi
+        if [[ -n "$INPUT_BRANCH" ]]; then
+          args+=(--branch "$INPUT_BRANCH")
+        fi
+        npx --yes "@errorgap/node@$INPUT_CLI_VERSION" "${args[@]}"
+        echo "status=recorded" >> "$GITHUB_OUTPUT"
